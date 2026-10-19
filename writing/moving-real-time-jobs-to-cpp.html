@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Moving real-time jobs to C++ without breaking production | Linze Shi</title>
+<meta name="description" content="Migrating high-throughput real-time jobs from an async stack to C++ stream processing: where per-record overhead hides, what JSON costs at volume, how Compact Thrift encodes a record, and how to ship it under live traffic.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>Moving real-time jobs to C++ without breaking production</h1>
+  <div class="byline">2025 &ndash; 2026 &middot; Meta, real-time infrastructure</div>
+
+  <p>I led the migration of a set of high-throughput, latency-sensitive processing jobs from an older async stack to a C++ stream-processing stack. On paper it was a port. In practice the translation was the least interesting part. At high volume, cost is decided by what happens per record, and most of that was in the execution model and the data format, not in the language.</p>
+
+  <h2>Per-record overhead is the real bill</h2>
+  <p>When a job handles a very large number of small records, the fixed cost of handling one record matters more than the work done on it. In the old jobs it hid in places that look free: allocating a future or a closure, handing work to another scheduler, copying a record into a new buffer, touching memory that was no longer in cache. Each costs little. Multiplied by every record, they outweighed the actual logic.</p>
+  <p>So most of my work went into the processing architecture and execution model: how records move through a job, and which work gets done once instead of again for every record. For each job I started from what it did per record that it didn't need to, and wrote the C++ after those decisions were made.</p>
+
+  <h2>What JSON costs at volume</h2>
+  <p>The data path carried JSON. JSON is easy to debug and expensive to process. Every field name travels with every record. Every number is decimal text that has to be parsed back into binary, and parsing a floating-point number from text is surprisingly expensive. The parser also has to scan every byte to find where strings start and end, handle escapes, and usually build string objects for keys it will immediately compare and throw away.</p>
+  <p>Compact Thrift encodes the same record as tagged binary. Each field starts with a single header byte: four bits for the field ID, written as a delta from the previous field when the delta is small enough to fit, and four bits for the type. Integers are zigzag-encoded and written as variable-length bytes, so small values take one byte. Here is one illustrative record both ways:</p>
+<pre><code>{"user_id":123456789,"ts":1712345678,"score":0.73,"country":"US","flags":5}
+  JSON:            75 bytes
+  Compact Thrift:  27 bytes
+    user_id  1 header + 4 varint     ts     1 header + 5 varint
+    score    1 header + 8 double     country 1 header + 1 length + 2
+    flags    1 header + 1 varint     end of struct 1</code></pre>
+  <p>The payload is about a third of the size, which helps the network. The bigger win is on the CPU: decoding is reading a byte, a varint, a fixed-width double. There is no text to scan and no decimal conversion.</p>
+
+  <h2>Shipping it under real traffic</h2>
+  <p>These jobs carried production traffic, so being faster wasn't enough. Every job moved behind a feature flag and went out in stages, with the old path ready to take traffic back. Before each cutover I wrote down what failure would look like and what to do about it, and turned that into runbooks. None of it is clever. It's what makes it safe to move quickly, and in a migration like this, being able to undo a step instantly is worth more than any single optimization.</p>
+
+  <h2>Result</h2>
+  <p>Both compute usage and CPU cycles fell by a large factor, and CPU cycles fell further. That gap is expected once you look at what each measures. CPU cycles count work done, while a compute-usage figure also reflects capacity a job holds whether or not it's busy, so removing per-record work shows up more sharply in cycles than in reserved capacity.</p>
+  <p>The habits from this project carried over: look for what is repeated per unit of work, price the data format before anything else, and never ship a change you can't take back in one step.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

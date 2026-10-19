@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>What batching does to agents | Linze Shi</title>
+<meta name="description" content="How sharing a batch on an inference server can change a tool-using agent's actions: floating-point reduction order, near-tied tokens, and why an agent's history keeps two runs apart.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>What batching does to agents</h1>
+  <div class="byline">August &ndash; September 2026 &middot; agents, serving</div>
+
+  <p>Inference servers batch unrelated requests together because it's far cheaper than running them one at a time. It's also known that this can change the text a model produces. For a chatbot, a slightly different sentence rarely matters. For an agent, text becomes an operation: it reads a record, sends a query, submits an answer. So the question is narrow. If the only thing that changes is who else shares the batch, can an agent end up doing something different?</p>
+
+  <h2>How a batch reaches a single request</h2>
+  <p>Requests in a batch don't read each other's data. What they share is the shape of the computation. A matrix multiply over a batch of one and a batch of four can pick different kernels, different tile sizes, or a different split of the reduction dimension across thread blocks. Each of those adds the same products in a different order, and floating-point addition isn't associative. So the numbers your request gets can differ in the last bits depending on who else is in the batch.</p>
+  <p>Those bits are usually harmless. In BF16, numbers between 16 and 32 are spaced 0.125 apart, so a value around 20 that passes through BF16 can move by several hundredths from rounding alone. Greedy decoding picks the top token, and most of the time the top token wins by a wide margin. But a long agent run makes many decisions, and some of them are close: two tool arguments, or two ways to phrase a search, within a tenth of a logit of each other. At one of those, a difference in the last bits flips the argmax.</p>
+
+  <h2>Why one flip doesn't stay small</h2>
+  <p>In plain generation, a flipped token changes some text. In an agent, it can change a tool call, and a tool call changes the world the agent sees next. One branch searches for one thing and the other for something slightly different, and they get back different results. From then on the two runs are conditioned on different observations, and every later decision is made in a different context. Nothing in the loop pulls them back together.</p>
+  <p>I spent a stretch of time measuring this on tool-use tasks with real environments. The forks are not rare curiosities. They reproduce, they show up across different serving setups, and some of them change whether the task ends up done correctly.</p>
+
+  <h2>History is part of the state</h2>
+  <p>The part I find most useful is about memory. Suppose two branches end in exactly the same environment state: same files, same database rows. It's tempting to say they've converged. They haven't, because each agent carries its own history of what it read and did, and that history is the context for every next decision. Two agents in identical environments with different histories can still act differently.</p>
+  <p>That breaks a common shortcut. Checking that two runs ended in the same environment isn't the same as checking that they behaved the same, because the context window is state too, and it doesn't live in the environment.</p>
+
+  <h2>Determinism, and its price</h2>
+  <p>The fix in principle is to make reduction order independent of batch composition, so a request computes the same numbers whatever it shares a batch with. Deterministic or batch-invariant serving modes do this, and they remove much of the effect. They aren't one switch that means the same thing everywhere, though: how complete the guarantee is depends on which kernels and code paths a model actually goes through. And it isn't free, because fixing the reduction order rules out the faster kernels that the batch shape would otherwise pick.</p>
+
+  <h2>What to take from it</h2>
+  <p>If you evaluate or train agents on shared inference infrastructure, the serving setup is part of your experiment. To reproduce an agent result, record the serving configuration, the executed actions and the retained history together. And when a measured difference between two agents is small, ask whether it's larger than what changing the batch alone would do.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

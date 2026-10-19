@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Turning LLM-generated rules into production checks | Linze Shi</title>
+<meta name="description" content="Why an agent that proposes data-quality checks is the easy part, the false-alarm arithmetic that forces a verification pipeline, and what deduplication and nested data really require.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>Turning LLM-generated rules into production checks</h1>
+  <div class="byline">2025 &ndash; 2026 &middot; Meta, data infrastructure</div>
+
+  <p>Production data never sits still. New fields show up, old ones change type, and a lot of it arrives as nested JSON whose structure keeps changing. Data checks are supposed to catch it when something breaks, but someone has to write them, and at some point we couldn't write them fast enough.</p>
+
+  <p>So I built an agent to write them. It reads a sample of production data, looks at each field and structure, and proposes checks: this column is never null, that value stays in a range, this nested object always has these keys. Language models are good at this part. Give one a sample of rows and it will make reasonable guesses about what normal looks like.</p>
+
+  <p>Everything hard came after the guess.</p>
+
+  <h2>The arithmetic of false alarms</h2>
+  <p>A check that is right most of the time sounds fine until you multiply. Suppose a system runs a thousand checks and each has a one-in-two-hundred chance of firing falsely on a given day. That's five false alerts every day, from checks that are each 99.5% reliable. At one in two thousand, it's one false alert every two days. People stop reading alerts long before the first number, and once they stop reading them the system protects nothing.</p>
+  <p>So the bar for a check isn't "probably right". It's a false-positive rate low enough that the whole fleet of checks stays quiet on a normal day. A model's first guess doesn't come close to that on its own, which is why the system is a pipeline with the model at the front:</p>
+<pre><code>sample production data
+  -&gt; propose candidate checks (LLM)
+  -&gt; drop low-confidence candidates
+  -&gt; drop duplicates of existing checks
+  -&gt; verify against data
+  -&gt; deploy into monitoring and alerting</code></pre>
+  <p>Every stage after the first exists to throw candidates away.</p>
+
+  <h2>A sample is not the population</h2>
+  <p>A rule inferred from a sample says something about that sample. A field that was never null in the rows the agent saw might be null on weekends, or for one rare client, or during a backfill. The model has no way to know. So I verified every candidate against data beyond the rows it was proposed from, and grounded its confidence score in how much of that data actually supported the rule, not in what the model said about itself.</p>
+
+  <h2>Deduplication is a logic problem</h2>
+  <p>Two candidates can look different and test the same thing. <code>x &gt; 0</code> and <code>x &gt;= 1</code> on an integer column are the same check. A not-null check and a range check on the same column overlap whenever the range check also rejects nulls. A new rule that is strictly weaker than an existing one adds nothing but a second alert for the same failure. So I didn't deduplicate by comparing text. Rules were normalized into a form where equivalence and implication could be checked, and a candidate that an existing check already implied was dropped.</p>
+
+  <h2>Nested data changes what a rule means</h2>
+  <p>Flat columns are the easy case. Inside a JSON blob, even simple rules get ambiguous. Does "this field is present" mean present and non-null, or just present? For an array of objects, does the rule hold for every element or for at least one? Is a missing key a failure, or an older record from before the key existed? I made every rule answer those questions explicitly, because left to the model's phrasing they get answered differently from one rule to the next. The verification step then evaluated each path deep inside an object the same way production code reads it.</p>
+
+  <h2>What working meant</h2>
+  <p>The measure wasn't how many rules the model produced. It was coverage people trusted and problems found early. The system grew to cover dozens of categories of real-time data, and within its first weeks in production it caught critical issues.</p>
+
+  <h2>What I'd keep</h2>
+  <p>Generation is cheap and keeps getting cheaper, so I put the design effort into verification. I budgeted the false-positive rate across the whole fleet before deploying anything, treated deduplication as reasoning about rules, and made the meaning of every check on nested data explicit. The model proposes. Everything that decides whether a check gets to wake someone up is something a person can inspect.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

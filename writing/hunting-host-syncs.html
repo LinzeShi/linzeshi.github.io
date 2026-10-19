@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Hunting host synchronizations in a diffusion loop | Linze Shi</title>
+<meta name="description" content="Removing hidden GPU-to-CPU synchronizations from vLLM-Omni model code, why cutting scalar reads from 700 to 3 did not change latency, and when it would.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>Hunting host synchronizations in a diffusion loop</h1>
+  <div class="byline">September &ndash; October 2026 &middot; vLLM-Omni</div>
+
+  <p>A GPU program written in PyTorch is two programs running at once. The CPU walks through your Python, and every tensor operation it meets becomes a kernel launch that goes into a queue. The GPU drains that queue. As long as the CPU stays ahead, the GPU never waits and the CPU's own overhead is hidden.</p>
+
+  <p>A host synchronization breaks that arrangement. <code>.item()</code>, <code>bool(tensor)</code>, <code>tensor.any()</code> inside an <code>if</code>: each of these needs a value that only exists on the GPU, so the CPU stops and waits until everything queued before it has finished. In a profile they show up as <code>aten::_local_scalar_dense</code> and <code>cudaStreamSynchronize</code>. They read like ordinary Python, which is why model code accumulates them.</p>
+
+  <p>I removed two sets of these from model code in vLLM-Omni. One was a clear win on the helper it touched. The other cut synchronizations by more than an order of magnitude and left end-to-end latency where it was. The second is the more instructive of the two.</p>
+
+  <h2>A speech model's prefill, one token at a time</h2>
+  <p>PersonaPlex is a full-duplex speech model. Its prefill built the input embedding one position at a time, with a read back to the CPU at each position. For a span of <code>n</code> tokens that's <code>n</code> round trips, each one draining the queue.</p>
+  <p>The fix was to build the token stack for the whole span on the GPU and call the existing embedding module once. The hard constraint was numerical: padding, audio fallbacks and even the order of floating-point additions had to match the old path, because a different summation order is a different number. So the change came with bitwise regression tests and an integration test on the first append, and the full model suite, which covers FP32, BF16 and FP16 on CUDA, passed with 385 tests. On a helper benchmark the vectorized path was much faster for multi-token spans. That benchmark covers the helper only, not full-model serving, and I said so in the PR.</p>
+
+  <h2>A diffusion loop that kept asking the same question</h2>
+  <p>SenseNova-U1 generates an image over 50 denoising steps. Every forward pass asked the GPU which kinds of generation tokens were present, with <code>.any().item()</code>, even though the answer is known before the loop starts. Several other things that never change within a request were rebuilt every step as well: vision grid metadata, the CFG decision, a fixed noise-scale embedding. The change passes the known token types down through the model and TeaCache and prepares the per-request values once. Image features and timestep embeddings still update every step, as they must.</p>
+  <p>On an H200 (SenseNova-U1.5-8B-MoT, BF16, 1024&times;1024, 50 steps, CFG 4, batch size 1):</p>
+  <table>
+    <thead><tr><th>Metric</th><th>Before</th><th>After</th></tr></thead>
+    <tbody>
+      <tr><td><code>_local_scalar_dense</code> per 50-step loop</td><td>700</td><td>3</td></tr>
+      <tr><td><code>cudaStreamSynchronize</code> per loop</td><td>853</td><td>60</td></tr>
+      <tr><td>Denoise median, ms/step</td><td>71.90</td><td>71.53</td></tr>
+      <tr><td>End-to-end P50, ms</td><td>3652</td><td>3643</td></tr>
+    </tbody>
+  </table>
+  <p>All 16 compared image pairs were pixel-identical, across CFG-off, restricted CFG intervals, image editing and think-enabled cases. And the latency is the same, within run-to-run noise.</p>
+
+  <h2>Why nothing got faster</h2>
+  <p>A synchronization costs you only when the CPU has something useful it could have done while waiting. Here it didn't. At batch size one, each denoising step is about 72 ms of GPU work, and the CPU's job per step, launching kernels, should be a small fraction of that. With or without the syncs, the CPU finishes its part early and ends up waiting on the GPU anyway. The syncs moved the waiting around without adding to it.</p>
+  <p>You can put a rough number on it. The change removed about 16 synchronizations per step and the step median dropped by 0.37 ms. Taken at face value, though it's inside the noise, that's roughly 20 microseconds per sync, in the range you'd expect for a round trip to the GPU. Over a 3.6-second image, 9 ms is a quarter of a percent. There was never much to win at this operating point, and I reported it that way rather than calling it a speedup.</p>
+
+  <h2>When it does matter</h2>
+  <p>The same change starts to pay off when the balance shifts toward the CPU. Three cases I'd expect it in, none of which I've measured here:</p>
+  <p>CUDA graphs. A captured graph replays a fixed sequence of kernels with almost no CPU involvement, and a host synchronization can't be captured at all. A loop full of <code>.item()</code> calls can't become a graph, so they have to go before graphs are even an option.</p>
+  <p>Small, fast steps. On lighter models or faster hardware, a step's GPU time shrinks while the CPU's launch work stays about the same. Once the CPU is the slower side, every sync adds directly to latency.</p>
+  <p>Asynchronous scheduling. Serving engines overlap the next step's scheduling with the current step's execution. A sync in model code forces the two back into lockstep.</p>
+
+  <h2>How to find them</h2>
+  <p>Count before guessing. A profile filtered for <code>_local_scalar_dense</code> and <code>cudaStreamSynchronize</code> tells you how many there are per step. <code>torch.cuda.set_sync_debug_mode("warn")</code> reports synchronizing calls as they happen, and vLLM's test suite has a <code>VLLM_GPU_SYNC_CHECK</code> switch for the same purpose. Then look for three patterns: <code>.item()</code> on a hot path, tensor truthiness in a conditional, and per-step recomputation of something that is fixed for the whole request.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

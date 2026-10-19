@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Where an agent's time goes | Linze Shi</title>
+<meta name="description" content="Breaking down a production LLM agent's end-to-end time, the prefill and decode arithmetic that decides what to optimize, and why concurrency changes the answer.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>Where an agent's time goes</h1>
+  <div class="byline">2025 &ndash; 2026 &middot; Meta, agent inference</div>
+
+  <p>Once the data-quality agent was running, cost became the question. Each run made several model calls, and they added up. The tempting move is to grab the obvious knob, a smaller model or a shorter prompt, and see what happens. I wanted to know where the time went first, because the right knob depends on it.</p>
+
+  <h2>Split the task before you split the model</h2>
+  <p>An agent run isn't one long inference. It's a loop: read some data, call the model, run a tool, check a result, call the model again. The first cut is by stage:</p>
+<pre><code>end-to-end task time
+  = data reading
+  + model execution
+  + rule verification and other tool work
+  + waiting in between</code></pre>
+  <p>That alone settled a lot. Time spent reading data or verifying rules isn't something inference work can touch, so I fixed those on the tool side and kept the inference work for the part that was actually inference.</p>
+
+  <h2>Prefill and decode cost different things</h2>
+  <p>Inside model execution, the split that matters is context processing (prefill) versus generation (decode), because they are limited by different hardware resources.</p>
+  <p>Decode is limited by memory bandwidth. To produce one token, the model reads all of its weights. Take an 8B-parameter model in BF16, about 16 GB of weights, on a GPU with around 2 TB/s of bandwidth: that's roughly 8 ms per generated token at batch size one, no matter how small the computation is.</p>
+  <p>Prefill is limited by compute. The model processes all the input tokens together, at roughly two floating-point operations per parameter per token. For the same model, that's about 16 GFLOP per token, and at a realistic 150 TFLOP/s on an A100-class GPU it comes to around 0.1 ms per input token.</p>
+  <p>So on this rough model, an input token is something like 80 times cheaper than an output token. Whether context or generation dominates depends on the ratio of input to output, and on where that ratio sits relative to 80 to 1. These numbers are illustrative, not measurements of the internal setup, but the shape of the argument holds across models and hardware.</p>
+
+  <h2>Agents re-send their context</h2>
+  <p>Here's what makes agent workloads unusual. Every turn sends the instructions again, the schema description again, and the results of earlier steps. If turn <code>t</code> carries a base context <code>B</code> plus <code>h</code> tokens of history per earlier step, the total input over <code>T</code> turns is</p>
+<pre><code>total prefill tokens  =  T * B  +  h * T (T - 1) / 2</code></pre>
+  <p>The history term grows with the square of the number of turns. With <code>B = 3000</code>, <code>h = 500</code> and ten turns, that's 52,500 input tokens, most of them copies of tokens the model has already processed. Prefix caching exists for precisely this: it turns the repeated part into a lookup and leaves only the new tokens to compute.</p>
+
+  <h2>Concurrency moves the bottleneck</h2>
+  <p>On the arithmetic above, ten turns of 200 output tokens cost about 16 seconds of decode at batch size one, more than the five or so seconds of prefill. But production agents rarely run at batch size one. When many agent runs share a GPU, each decode step reads the weights once for the whole batch, so the bandwidth cost per token falls with batch size. Prefill cost per token doesn't. The more concurrent runs you have, the more the repeated context becomes the thing you're paying for.</p>
+  <p>Concurrency also helps with the other cost that per-call latency hides: the gaps. Model calls alternate with tool calls, so while one run waits on a tool, the GPU sits idle unless other runs fill it. Measuring only model latency misses this entirely.</p>
+
+  <h2>Judge a change on three things</h2>
+  <p>A change counted only if it held up on all three. End-to-end task time, not per-call time. Resource use, because a faster run that needs twice the hardware isn't cheaper. And behavior: the rules the agent produced, and the path it took to get there, had to stay the same. An agent that gets faster but starts proposing different checks has changed, not improved.</p>
+  <p>The last one is easy to skip. Batching more runs together, which the arithmetic above pushes you toward, changes how the model is served, and small changes in serving can change what an agent decides to do. That's the question my later research on batching and agents looks at directly.</p>
+
+  <h2>Why there are no real numbers here</h2>
+  <p>The actual savings depended on internal models and workloads, so I won't quote them. The method carries over, and it's the same reasoning behind my current work on the teacher side of on-policy distillation in vLLM, where repeated context is again a large share of the cost.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

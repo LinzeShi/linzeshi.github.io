@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Letting a teacher model reuse the prompt cache | Linze Shi</title>
+<meta name="description" content="Why target-token scoring in vLLM skipped the prefix cache, why the cache hit has to stop exactly at the first scored position, and a simple cost model that predicts the measured speedup.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>Letting a teacher model reuse the prompt cache</h1>
+  <div class="byline">October 2026 &middot; vLLM, on-policy distillation</div>
+
+  <p>In on-policy distillation (OPD), a small student writes its own answers and a larger teacher scores every token of them. The student learns from those scores. On the serving side, almost all of the teacher's work is one kind of request: here is a context, here is a response, tell me what you would have predicted at each response position.</p>
+
+  <p>Those requests overlap a lot. A training step usually samples several responses per prompt, and agent or document tasks carry thousands of tokens of shared context. vLLM has a prefix cache for exactly this kind of overlap, yet scoring requests didn't use it. I ran into that while wiring VIME's distillation path to vLLM's per-position scoring, and the reason turned out to be a good one.</p>
+
+  <h2>What a scoring request asks for</h2>
+  <p>The request sends the full input, context followed by the student's response, and asks for scores starting at the last context position:</p>
+<pre><code>SamplingParams(
+    max_tokens=1,
+    prompt_logprob_start=P - 1,          # P = number of context tokens
+    prompt_logprob_token_ids=[[t] for t in response_token_ids],
+    skip_reading_prefix_cache=False,
+)</code></pre>
+  <p>Call that start position <code>S</code> and the input length <code>N</code>. Row <code>j</code> of the result comes from the model's output at position <code>S + j</code>. Position <code>S</code> is the last context token. Its output distribution predicts the first response token, so it is the first position whose output we need.</p>
+
+  <h2>Why a cache hit can lose scores</h2>
+  <p>A transformer forward pass produces two different things at each position: the keys and values that later positions attend to, and the hidden state that the LM head turns into logits. The prefix cache stores only the first. That's all generation needs, because generation only ever asks for the logits of the last position.</p>
+  <p>Scoring breaks that assumption. If the cache covers position <code>S</code> or anything after it, the engine skips computing those positions, the KV for them is restored from cache, and their logits are simply never produced. The request comes back with rows missing. So scoring requests skipped cache reads by default, and turning reads on could return an incomplete result without an error.</p>
+
+  <h2>The rule: stop the hit at S</h2>
+  <p>Everything before <code>S</code> is still safe to reuse. Positions <code>S</code> and later attend to the cached prefix through its KV exactly as they would to freshly computed KV, so their outputs don't change. The fix is a cap on the cache lookup:</p>
+<pre><code>max_cache_hit_length = min(S, N - 1)
+cached_prefix H &lt;= S</code></pre>
+
+  <div class="fig">
+    <svg viewBox="0 0 720 120" width="100%" role="img" aria-label="Context tokens before position S come from the cache; positions from S onward are computed and scored.">
+      <rect x="10" y="40" width="430" height="34" rx="6" fill="currentColor" opacity="0.12"/>
+      <rect x="440" y="40" width="270" height="34" rx="6" fill="currentColor" opacity="0.32"/>
+      <line x1="420" y1="28" x2="420" y2="86" stroke="currentColor" stroke-dasharray="4 3"/>
+      <text x="20" y="62" font-size="14" fill="currentColor">context, reused from cache  [0, H)</text>
+      <text x="452" y="62" font-size="14" fill="currentColor">computed, scored  [S, N)</text>
+      <text x="412" y="22" font-size="12" fill="currentColor">H</text>
+      <text x="436" y="104" font-size="12" fill="currentColor">S</text>
+      <line x1="440" y1="76" x2="440" y2="92" stroke="currentColor"/>
+    </svg>
+  </div>
+
+  <p>Two details fall out of this. The cache works in blocks, so the usable hit rounds down to a block boundary: with 16-token blocks and <code>S = 2047</code>, the hit is 2032 tokens and the last 15 context tokens are recomputed. That costs almost nothing. And the cap holds even when an earlier request with the same response is fully cached, response included. Those response positions still have to run, because their KV is cached but their logits are not.</p>
+
+  <h2>Making the cap survive the scheduler</h2>
+  <p>The rule is one line. Keeping it true is the harder part, because a request doesn't run once from start to finish. Chunked prefill splits a long prompt across engine steps, and preemption can evict a half-finished request and bring it back later, at which point it looks up the cache again.</p>
+  <p>So the cap is resolved once, at admission, and stored on the request without touching the caller's sampling parameters. The KV cache manager applies it on every lookup, including the one after preemption, and the worker assembles scores by absolute position and rejects an incomplete buffer instead of returning it. Block allocation, reference counting and scheduling order don't change. Tensor parallelism needs no special handling: the scheduler makes the cache decision and every rank executes the same plan.</p>
+  <p>I kept the first version narrow on purpose: text inputs, one full-attention KV group, unquantized KV, standard tensor parallelism. Everything else falls back to full recomputation, which is exactly the old behavior. It's easier to widen a correct rule than to fix a fast wrong one.</p>
+
+  <h2>How much should this save?</h2>
+  <p>Before measuring, it's worth predicting. Say each prompt has <code>P</code> context tokens and <code>K</code> responses of <code>R</code> tokens each, all scored by the same teacher. Without reuse, every request prefills the whole thing. With perfect reuse, the context is computed once and only the responses are computed per request. Counting prefilled tokens, and ignoring that attention cost grows with position:</p>
+<pre><code>speedup  &lt;=  K (P + R) / (P + K R)</code></pre>
+  <p>The two workloads I tested sit at opposite ends of this formula. Long documents had about 3,000 to 4,000 context tokens and short responses of 13 to 58 tokens. With <code>K = 4</code> and typical values, the bound is about 3.9&times;. Math prompts were the reverse: 140 to 210 context tokens and responses of 437 to 1,024 tokens. There the bound is about 1.17&times;. Reuse can only remove the part that is shared, and in math the shared part is small.</p>
+
+  <h2>What it actually did</h2>
+  <p>Measured with Qwen3-32B at TP=4 on 4&times;A100 80GB, four responses per prompt, each group starting from an empty cache:</p>
+  <table>
+    <thead><tr><th>Workload</th><th>Token budget</th><th>Uncached</th><th>Bounded reuse</th><th>Speedup</th><th>Simple bound</th></tr></thead>
+    <tbody>
+      <tr><td>Long documents</td><td>512</td><td>6.13 s</td><td>1.60 s</td><td>3.84&times;</td><td rowspan="2">&asymp;3.9&times;</td></tr>
+      <tr><td>Long documents</td><td>2048</td><td>5.16 s</td><td>1.39 s</td><td>3.71&times;</td></tr>
+      <tr><td>Short math prompts</td><td>512</td><td>1.88 s</td><td>1.66 s</td><td>1.13&times;</td><td rowspan="2">&asymp;1.17&times;</td></tr>
+      <tr><td>Short math prompts</td><td>2048</td><td>1.61 s</td><td>1.42 s</td><td>1.14&times;</td></tr>
+    </tbody>
+  </table>
+  <p>The measurements land just under the bound on both workloads. That is the result I care about more than the 3.8&times; itself: it says the implementation is close to removing all of the shared work there is to remove. Most of the remaining gap is likely the fixed cost every request still pays, including the one generated token that the current request lifecycle requires, plus the extra attention cost of response tokens reading a long cached context.</p>
+
+  <h2>A note on numerics</h2>
+  <p>Reuse changes the shapes that kernels run on, and in BF16 that changes results slightly. On the 32B runs the largest logprob difference from uncached scoring was 0.50, on the same order as the 0.37 between scoring one request alone and in a batch with no cache at all. In batch-invariant mode, where kernels are forced to reduce in a fixed order, uncached, reused and preempted paths matched exactly on a small model at TP=2 and TP=4. So the difference comes from execution shape, not from the reuse logic. Whether noise of that size matters for training is a question for loss and gradient comparisons, not something to assume either way.</p>
+
+  <h2>Where it gets hard</h2>
+  <p>The teachers people most want to distill from are long-context models, and their caches don't look like the simple case. A sliding-window layer doesn't keep the whole prefix, so a cache hit has to be consistent across layers that remember different spans. Hybrid models carry several KV groups that all have to agree on one hit length. Quantized KV raises the numerics question again. The boundary rule stays the same in all of them. What changes is how much of the cache machinery has to understand it. After that comes reusing the scores themselves, not just the context, which is a different kind of cache: one keyed on outputs rather than on attention state.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

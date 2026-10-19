@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Late chunking in vLLM: one encode, many chunk vectors | Linze Shi</title>
+<meta name="description" content="Adding late chunking to vLLM's pooling path: why the pooling has to happen before the embedding head, why the sums need FP32, and what attention direction does to the idea.">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="article-page">
+  <a class="back" href="../#blog">&larr; Linze Shi</a>
+  <h1>Late chunking in vLLM: one encode, many chunk vectors</h1>
+  <div class="byline">September &ndash; October 2026 &middot; vLLM pooling</div>
+
+  <p>Retrieval systems usually split a document into chunks and embed each chunk on its own. That is simple, and it throws away context. If one paragraph says "its maintenance team" and the company it refers to was named two paragraphs earlier, that chunk's embedding has no way of knowing which company it is.</p>
+
+  <p><a href="https://arxiv.org/abs/2409.04701">Late chunking</a> changes the order of operations. Run the whole document through the encoder once, so every token's hidden state has attended to the full text, and only then average the token states inside each chunk. Each chunk vector now carries its surroundings with it. The algorithm is simple and already published. Getting it into vLLM correctly was mostly a question of where in the pipeline the averaging happens, and that turned out to have real consequences.</p>
+
+  <h2>The order of operations is the whole feature</h2>
+  <p>An embedding model doesn't hand you raw hidden states. After pooling it usually applies a head: sometimes a projection, often a dimension cut, almost always an L2 normalization. Late chunking has to put the chunk mean in the place where the model's normal pooling would go, before that head:</p>
+<pre><code>chunk_vector = head( mean( h[start:end] ) )        # correct
+chunk_vector = mean( head( h[start:end] ) )        # not the same thing</code></pre>
+  <p>The two are not interchangeable. A linear projection commutes with the mean, but normalization doesn't: the mean of unit vectors is not a unit vector, and normalizing each token first and then averaging gives a different direction from averaging first, because before normalization the tokens with larger norms pull the mean harder, and after it every token counts the same. Any activation in the head breaks the commutation too. This is the main reason I didn't want users doing it on the client side. vLLM can already return per-token embeddings, but by default they come out normalized, and pooling them afterwards quietly produces a different vector than the model's own pooling would.</p>
+
+  <h2>Sums need more precision than the model</h2>
+  <p>The hidden states are BF16, which keeps eight bits of precision, a relative rounding error of up to about 0.4%. Adding a few hundred values of similar size in BF16 loses low-order bits on every step, and the error grows with chunk length. So the chunk sums accumulate in FP32, and only the finished mean goes on to the head. It's a one-line decision that you only notice when the chunk vectors from a long document stop matching a reference implementation.</p>
+
+  <h2>Attention direction matters</h2>
+  <p>The idea assumes every token has seen the whole document. That's true for bidirectional encoders like BERT-style embedding models, which are what late chunking was designed for. In a causal model, token <code>i</code> only attends to tokens before it, so a late-chunked vector carries left context only: the second paragraph knows about the first, but not the other way round. That can still beat chunking in isolation, but it's a different object, which is why the testing focused on bidirectional encoders like E5, Nomic and BGE-M3.</p>
+
+  <h2>Where the reduction lives</h2>
+<pre><code>one forward pass over the document
+  -&gt; chunk means over contextual token states, accumulated in FP32
+  -&gt; the model's own embedding head (projection, dimension cut, normalization)
+  -&gt; K chunk vectors returned to the caller</code></pre>
+  <p>Doing the reduction on the GPU, in the worker, also changes how much data moves. An 8,192-token document with 1,024-dimensional FP32 states is 32 MB of token vectors. Sixty-four chunk vectors of the same width are 256 KB. Exporting every token to the frontend just to average most of it away is a lot of copying for nothing.</p>
+  <p>From the caller's side it's one option on the existing token-embedding task:</p>
+<pre><code>from vllm import PoolingParams
+from vllm.pooling_params import LateChunkingParams
+
+output = llm.encode(
+    "search_document: Berlin is in Germany. It has many museums.",
+    pooling_task="token_embed",
+    pooling_params=PoolingParams(
+        late_chunking_params=LateChunkingParams(chunk_size=8)
+    ),
+)[0]
+vectors = output.outputs.data          # [num_chunks, embedding_dim]
+ranges = output.late_chunking.chunks   # token and source-text ranges</code></pre>
+
+  <h2>The details that decide whether the vectors are right</h2>
+  <p>Token IDs and character offsets come from a single tokenization pass, so the source-text ranges returned to the caller line up exactly with what was pooled. Tokenizing twice, once to find boundaries and once to encode, is an easy way to end up with chunks that are off by a token at the edges.</p>
+  <p>Special tokens count. They sit inside chunk boundaries and means like any other token, including BGE-M3's BOS token, and the filter that normally strips BOS and EOS from token outputs leaves chunk outputs alone. The last chunk is averaged over the tokens it actually has instead of being padded out to the chunk size, which would drag its mean toward whatever the padding state is.</p>
+  <p>Anything that would quietly change the input is rejected up front: truncation, padding, text normalization in the renderer, token-row filtering, late-interaction scoring. One ranking model has a custom pooler that returns document and query vectors. It's rejected before tokenization, because otherwise it would return something that looks like an embedding and isn't.</p>
+
+  <h2>Testing it</h2>
+  <p>The change landed with 203 parameter, IO, pooler, head and tokenizer regression tests, plus 20 offline GPU and tiling tests covering E5, Nomic and BGE-M3 with prefix caching and chunked prefill, on both model runners. An STS12 run with Nomic matched the reference within the existing tolerance. There's no speed claim. The point is correct context-aware chunk vectors without exporting every token.</p>
+  <p>Testing Nomic at long context surfaced something unrelated: it was running with the default RoPE instead of its configured dynamic scaling. That went in as a separate bug and fix rather than being folded into this change, so it couldn't hide behind it.</p>
+
+  <h2>Serving it online</h2>
+  <p>The first release was offline, through <code>LLM.encode</code>. I then extended it to the online <code>/v1/embeddings</code> API, and most of that review was about API shape rather than math: whether chunk vectors belong under embed or under encode. That question sounds cosmetic and isn't, because it decides which defaults and which normalization a user gets without asking for them.</p>
+</div>
+<script>document.addEventListener("pointermove",function(e){var s=document.documentElement.style;s.setProperty("--mx",e.clientX+"px");s.setProperty("--my",e.clientY+"px")},{passive:true});</script>
+<script>(function(){var b=document.querySelector(".theme-toggle");if(!b)return;b.addEventListener("click",function(){var r=document.documentElement;var c=r.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var n=c==="dark"?"light":"dark";r.setAttribute("data-theme",n);try{localStorage.setItem("theme",n)}catch(e){}});})();</script>
+</body>
+</html>

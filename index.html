@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Linze Shi</title>
+<meta name="description" content="Linze Shi works on LLM inference and RL infrastructure as a contributor to vLLM and vLLM-Omni.">
+<meta property="og:title" content="Linze Shi">
+<meta property="og:description" content="LLM inference and RL infrastructure. Contributor to vLLM and vLLM-Omni.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='43' font-family='Inter,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle'%3ELS%3C/text%3E%3C/svg%3E">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button>
+<div class="page">
+
+<header class="side">
+  <div>
+    <h1><a href="./">Linze Shi</a></h1>
+    <p class="role">LLM inference &amp; RL infrastructure</p>
+    <p class="intro">I lead teacher serving for on-policy distillation on vLLM's RL roadmap and work across vLLM-Omni's multimodal runtime.</p>
+    <ul class="badges"><li>vLLM</li><li>vLLM-Omni</li><li>VIME</li></ul>
+    <nav>
+      <ul class="toc">
+        <li><a href="#about">About</a></li>
+        <li><a href="#open-source">Open Source</a></li>
+        <li><a href="#blog">Blog</a></li>
+        <li><a href="#research">Research</a></li>
+      </ul>
+    </nav>
+  </div>
+  <ul class="social">
+    <li><a href="https://github.com/LinzeShi" aria-label="GitHub" title="GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a></li>
+    <li><a href="https://www.linkedin.com/in/linze-shi" aria-label="LinkedIn" title="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13ZM7.12 20.45H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0Z"/></svg></a></li>
+  </ul>
+</header>
+
+<main class="content">
+
+<section id="about">
+  <h2 class="label">About</h2>
+  <p>I work on <strong>LLM inference</strong> and the infrastructure around it. Most of my time goes into <strong>vLLM</strong>, the open-source inference engine, and <strong>vLLM-Omni</strong>, its multimodal extension. The thread running through it is making serving work well for what comes after it: training loops, agents, and retrieval.</p>
+  <p>At <strong>Meta</strong>, I led the design and build of an LLM-agent system that writes, verifies and deploys data-quality checks across production systems, and I made its inference cheaper. I also led the move of high-throughput, latency-sensitive real-time jobs to a C++ stream-processing stack, which cut their compute substantially under full production traffic.</p>
+  <p>Inference systems, and the research questions they raise, are what I spend my time on. My background is in computer science at <strong>Carnegie Mellon University</strong>, and I did my undergraduate studies at <strong>Xi'an Jiaotong University</strong>.</p>
+</section>
+
+<section id="open-source">
+  <h2 class="label">Open Source</h2>
+  <p>I build in the vLLM ecosystem, across the engine core, its RL-facing serving paths, pooling, and the vLLM-Omni multimodal runtime.</p>
+
+  <div class="roles">
+    <div class="role-card">
+      <div class="role-k">vLLM &times; RL &middot; Q4 2026 roadmap</div>
+      <div class="role-t">Lead, OPD teacher serving</div>
+      <p>Author of the teacher-serving roadmap for on-policy distillation and owner of its milestones: prefix-cache reuse for scoring, score reuse and delivery to trainers, tensor-parallel candidate scoring, and multi-turn validation.</p>
+      <a href="https://github.com/vllm-project/vllm/issues/62175">View roadmap &rarr;</a>
+    </div>
+    <div class="role-card">
+      <div class="role-k">vLLM-Omni &middot; Q4 2026 roadmap</div>
+      <div class="role-t">Owner, four roadmap areas</div>
+      <p>Responsible for DiT KV-cache adoption, diffusion batching and resource accounting, batching and streaming validation, and shape-aware CUDA graph capture for diffusion encoders.</p>
+      <a href="https://github.com/vllm-project/vllm-omni/issues/8264">View roadmap &rarr;</a>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">Oct 2026 &ndash; now</div>
+    <div>
+      <h3>Teacher serving for on-policy distillation <span class="org">&middot; vLLM core</span></h3>
+      <p>In on-policy distillation a teacher scores every token the student writes, and scoring requests used to skip the prefix cache and recompute the shared context. I designed bounded prefix reuse across the KV cache manager and scheduler, including chunked prefill and preemption: <strong>3.7&ndash;3.8&times; faster</strong> teacher scoring on long shared contexts with a 32B teacher at TP=4.</p>
+      <a class="more" href="https://github.com/vllm-project/vllm/issues/60366">Design and implementation &rarr;</a>
+      <ul class="tags"><li>KV cache</li><li>scheduler</li><li>tensor parallelism</li><li>RL</li></ul>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">Sep &ndash; Oct 2026</div>
+    <div>
+      <h3>Late chunking <span class="org">&middot; vLLM pooling</span></h3>
+      <p>Brought late chunking into vLLM's pooling path: one pass over a long document, chunk vectors pooled on the GPU before the embedding head, so each chunk carries the context around it. Designed through an RFC, built for offline use and then extended to the online <code>/v1/embeddings</code> API.</p>
+      <a class="more" href="https://github.com/vllm-project/vllm/issues/58774">Design and implementation &rarr;</a>
+      <ul class="tags"><li>pooling</li><li>embeddings</li><li>retrieval</li></ul>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">Sep &ndash; Oct 2026</div>
+    <div>
+      <h3>Diffusion and full-duplex speech runtime <span class="org">&middot; vLLM-Omni</span></h3>
+      <p>Runtime work for image-generation and speech models: TeaCache correctness and an order-of-magnitude cut in host synchronizations in the SenseNova-U1 denoising loop, KV caches kept in flash layout, vectorized PersonaPlex prefill, and explicit turn-based serving for full-duplex models.</p>
+      <a class="more" href="https://github.com/vllm-project/vllm-omni/pulls?q=is%3Apr+author%3ALinzeShi">Work in vLLM-Omni &rarr;</a>
+      <ul class="tags"><li>diffusion</li><li>speech</li><li>CUDA</li></ul>
+    </div>
+  </div>
+</section>
+
+<section id="blog">
+  <h2 class="label">Blog</h2>
+
+  <div class="entry">
+    <div class="when">Oct 2026</div>
+    <div>
+      <h3><a href="writing/teacher-scoring-prefix-cache.html">Letting a teacher model reuse the prompt cache</a></h3>
+      <p>Why scoring requests skipped the prefix cache, why the hit has to stop exactly at the first scored position, and a one-line cost model whose bound sits just above the measured 3.8&times;.</p>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">Sep &ndash; Oct 2026</div>
+    <div>
+      <h3><a href="writing/late-chunking-in-vllm.html">Late chunking in vLLM: one encode, many chunk vectors</a></h3>
+      <p>Why the mean has to come before the embedding head, why the sums need FP32, and what attention direction does to the idea.</p>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">Sep &ndash; Oct 2026</div>
+    <div>
+      <h3><a href="writing/hunting-host-syncs.html">Hunting host synchronizations in a diffusion loop</a></h3>
+      <p>Cutting scalar reads from 700 to 3 per image, why the latency didn't move, and the cases where it would.</p>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">Aug &ndash; Sep 2026</div>
+    <div>
+      <h3><a href="writing/what-batching-does-to-agents.html">What batching does to agents</a></h3>
+      <p>From floating-point reduction order to a different tool call, and why the history an agent carries keeps the runs apart.</p>
+    </div>
+  </div>
+  <div class="entry">
+    <div class="when">2025 &ndash; 2026</div>
+    <div>
+      <h3><a href="writing/where-an-agents-time-goes.html">Where an agent's time goes</a></h3>
+      <p>The prefill and decode arithmetic behind agent workloads, the quadratic cost of re-sent context, and why concurrency changes the answer.</p>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">2025 &ndash; 2026</div>
+    <div>
+      <h3><a href="writing/llm-rules-to-production-checks.html">Turning LLM-generated rules into production checks</a></h3>
+      <p>The false-alarm arithmetic that forces a verification pipeline, and why deduplication is a logic problem.</p>
+    </div>
+  </div>
+
+  <div class="entry">
+    <div class="when">2025 &ndash; 2026</div>
+    <div>
+      <h3><a href="writing/moving-real-time-jobs-to-cpp.html">Moving real-time jobs to C++ without breaking production</a></h3>
+      <p>Where per-record overhead hides, what JSON costs at volume, and how Compact Thrift encodes a record byte by byte.</p>
+    </div>
+  </div>
+</section>
+
+<section id="research">
+  <h2 class="label">Research</h2>
+  <p>I also do research on questions that come out of the systems work. Selected work, under review; titles are held back until the review period ends.</p>
+
+  <div class="paper">
+    <div class="t">How serving conditions change what agents do <span class="venue-light">ICLR 2027</span></div>
+    <div class="a">First author</div>
+    <div class="tldr">Changing only what an inference server batches with a request can change which tools an agent calls, and the history it carries keeps the runs apart afterwards.</div>
+  </div>
+  <div class="paper">
+    <div class="t">On-policy distillation <span class="venue-light">ICLR 2027 &middot; ACL Rolling Review</span></div>
+    <div class="a">Joint work, three papers</div>
+    <div class="tldr">A line of work on how a student should learn from a teacher on its own samples. When a student matches a teacher's hidden states layer by layer, the last few layers end up dominating the gradient, and leaving them out of the loss works better than every reweighting we tested. A model's own expert persona can serve as its teacher, so distillation needs no reference solutions. And a teacher with a different tokenizer that exposes only its ranked top candidates, never its probabilities, still carries enough signal to teach. It's the same problem I work on from the serving side in vLLM, where scoring every student token is the cost the teacher-serving work brings down.</div>
+  </div>
+  <div class="paper">
+    <div class="t">Reinforcement learning for native-language reasoning <span class="venue-light">ACL Rolling Review</span></div>
+    <div class="a">First author</div>
+    <div class="tldr">Reasoning vision-language models think in English even for questions in other languages, and RL cannot reward a behavior it never samples. Supplying it during rollouts can make native reasoning the default.</div>
+  </div>
+</section>
+
+<footer>Updated October 2026.</footer>
+</main>
+</div>
+
+<script>
+  document.addEventListener("pointermove", function (e) {
+    document.documentElement.style.setProperty("--mx", e.clientX + "px");
+    document.documentElement.style.setProperty("--my", e.clientY + "px");
+  }, { passive: true });
+  var links = document.querySelectorAll(".toc a");
+  if ("IntersectionObserver" in window && links.length) {
+    var map = {};
+    links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting && map[en.target.id]) {
+          links.forEach(function (a) { a.classList.remove("active"); });
+          map[en.target.id].classList.add("active");
+        }
+      });
+    }, { rootMargin: "-40% 0px -55% 0px" });
+    document.querySelectorAll("main section[id]").forEach(function (s) { io.observe(s); });
+  }
+  var btn=document.querySelector(".theme-toggle");
+  if(btn){btn.addEventListener("click",function(){
+    var root=document.documentElement;
+    var cur=root.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+    var next=cur==="dark"?"light":"dark";
+    root.setAttribute("data-theme",next);
+    try{localStorage.setItem("theme",next)}catch(e){}
+  });}
+</script>
+</body>
+</html>
