@@ -18,7 +18,7 @@
 
   <p>In on-policy distillation (OPD), a small student writes its own answers and a larger teacher scores every token of them. The student learns from those scores. On the serving side, almost all of the teacher's work is one kind of request: here is a context, here is a response, tell me what you would have predicted at each response position.</p>
 
-  <p>Those requests overlap a lot. A training step usually samples several responses per prompt, and agent or document tasks carry thousands of tokens of shared context. vLLM has a prefix cache for exactly this kind of overlap, yet scoring requests didn't use it. I ran into that while wiring VIME's distillation path to vLLM's per-position scoring, and the reason turned out to be a good one.</p>
+  <p>Those requests overlap a lot. A training step usually samples several responses per prompt, and agent or document tasks carry thousands of tokens of shared context. vLLM has a prefix cache for exactly this kind of overlap, yet scoring requests didn't use it. I ran into that while wiring Vime's distillation path to vLLM's per-position scoring, and the reason turned out to be a good one.</p>
 
   <h2>What a scoring request asks for</h2>
   <p>The request sends the full input, context followed by the student's response, and asks for scores starting at the last context position:</p>
